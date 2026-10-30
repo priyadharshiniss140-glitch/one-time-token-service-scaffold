@@ -1,31 +1,38 @@
 // test.js
 // Prove the service is single-use under concurrency.
-//
-// TODO:
-//   1. Issue one token.
-//   2. Fire 5 consumeToken calls AT ONCE with Promise.all.
-//   3. Count how many returned { ok: true } and assert it is exactly 1.
-//   4. Print the winners count so it shows in the output.
 
+import assert from "node:assert/strict";
 import { issueToken, consumeToken, closeRedis } from "./token-service.js";
 
 async function main() {
-  const id = await issueToken({ userId: 42 }, 60);
-  console.log("issued token:", id);
+  try {
+    const id = await issueToken({ userId: 42 }, 60);
+    console.log("issued token:", id);
 
-  // TODO: fire 5 consumers concurrently with Promise.all
-  const results = await Promise.all([
-    // consumeToken(id), consumeToken(id), consumeToken(id),
-    // consumeToken(id), consumeToken(id),
-  ]);
+    // All five consumers race concurrently for the same one-time token.
+    const results = await Promise.all([
+      consumeToken(id),
+      consumeToken(id),
+      consumeToken(id),
+      consumeToken(id),
+      consumeToken(id),
+    ]);
 
-  const winners = results.filter((r) => r.ok).length;
-  console.log("winners:", winners); // expect exactly 1
+    const winners = results.filter((result) => result.ok).length;
+    console.log("winners:", winners);
 
-  console.assert(winners === 1, "SINGLE-USE VIOLATED! winners = " + winners);
-  if (winners === 1) console.log("PASS: token was single-use.");
+    assert.equal(winners, 1, "Expected exactly one consumer to win");
+    const losers = results.filter((result) => !result.ok);
+    assert.equal(losers.length, 4);
+    assert.ok(losers.every((result) => result.reason === "invalid"));
 
-  await closeRedis();
+    console.log("PASS: token was single-use.");
+  } finally {
+    await closeRedis();
+  }
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
